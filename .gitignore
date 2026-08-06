@@ -98,3 +98,8 @@ vitest.config.*.timestamp*
 /output.txt
 
 .amp
+
+# Magic Patch working copies: large, regenerable, and reviewed in place
+# rather than in history.
+db/
+temp/
