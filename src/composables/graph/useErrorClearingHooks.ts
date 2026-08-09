@@ -361,11 +361,7 @@ function handleNodeModeChange(
   } else {
     scanAndAddNodeErrors(node)
     scanAncestorSubgraphHosts(execId)
-    if (
-      useMissingModelStore().hasMissingModels ||
-      useMissingMediaStore().hasMissingMedia ||
-      useMissingNodesErrorStore().hasMissingNodes
-    ) {
+    if (useExecutionErrorStore().hasMissingError) {
       useExecutionErrorStore().showErrorOverlay()
     }
   }

@@ -802,7 +802,9 @@ describe('hasMissingError', () => {
     {
       type: 'nodes',
       seedMissingError: () => {
-        useMissingNodesErrorStore().missingNodesError = fromAny({})
+        useMissingNodesErrorStore().setMissingNodeTypes([
+          { type: 'TestNode', hint: '' }
+        ])
       }
     },
     {
@@ -827,7 +829,7 @@ describe('hasMissingError', () => {
     expect(executionErrorStore.hasMissingError).toBe(true)
   })
 
-  it('excludes node validation errors', () => {
+  it('returns false when only node validation errors exist', () => {
     const executionErrorStore = useExecutionErrorStore()
     executionErrorStore.recordNodeErrors({
       '1': nodeError([validationError('required_input_missing', 'input')])

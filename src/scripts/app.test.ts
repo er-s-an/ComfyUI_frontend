@@ -1068,7 +1068,6 @@ describe('ComfyApp', () => {
     it('clears missing node packs, which its graph swap skips clean() for', async () => {
       const graph = new LGraph()
       Reflect.set(app, 'rootGraphInternal', graph)
-      Reflect.set(singletonApp, 'rootGraphInternal', graph)
       const missingNodesStore = useMissingNodesErrorStore()
       missingNodesStore.setMissingNodeTypes(['OutgoingMissingNode'])
       vi.mocked(getWorkflowDataFromFile).mockResolvedValue({
@@ -1085,6 +1084,26 @@ describe('ComfyApp', () => {
 
       expect(missingNodesStore.missingNodesError).toBeNull()
     })
+
+    it.for(['not-a1111', 'core-nodes-unavailable'] as const)(
+      'keeps missing node packs when the import fails with %s',
+      async (outcome) => {
+        const graph = new LGraph()
+        Reflect.set(app, 'rootGraphInternal', graph)
+        const missingNodesStore = useMissingNodesErrorStore()
+        missingNodesStore.setMissingNodeTypes(['OutgoingMissingNode'])
+        vi.mocked(getWorkflowDataFromFile).mockResolvedValue({
+          parameters: 'positive\nNegative prompt: negative\nSteps: 20'
+        })
+        mockImportA1111.mockResolvedValue(outcome)
+
+        await app.handleFile(createTestFile('a1111.png', 'image/png'))
+
+        expect(missingNodesStore.missingNodesError?.nodeTypes).toEqual([
+          'OutgoingMissingNode'
+        ])
+      }
+    )
   })
 
   describe('clean', () => {
