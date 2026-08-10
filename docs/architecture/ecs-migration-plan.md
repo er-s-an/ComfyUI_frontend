@@ -228,24 +228,22 @@ rather than relocated:
 | `VueNodeData` mirror + `node:property:changed` handlers       | deleted; the renderer drills the `NodeState` proxy from `nodeDataStore`                                                   |
 | `getNode()` / `nodeRefs` map                                  | deleted; pinned state is read off the `NodeState` the renderer already holds, live-node lookups go to `graph.getNodeById` |
 | `shallowReactive` graft onto `inputs` / `outputs` / `widgets` | deleted; see 2e                                                                                                           |
-| `layoutStore` seeding on add/remove                           | moved to `useVueNodeLifecycle`, driven by the `node:added` / `node:removed` graph events                                  |
+| `layoutStore` seeding on add/remove                           | moved to `LGraph.add` / `LGraph.remove`, where the entity's geometry registers and unregisters with the entity itself     |
 
 Two consequences worth recording:
 
-- The **`configuringGraph` deferral is gone.** The `node:added` listener seeds
-  the layout entry with whatever geometry the node has; the `pos`/`size` setters
-  already write through to `layoutStore`, so `configure()` updates the entry as
-  the real values land. No `onAfterGraphConfigured` chaining, no `window.app`
-  read.
+- The **`configuringGraph` deferral is gone.** `LGraph.add` registers the layout
+  entry with whatever geometry the node has; the `pos`/`size` setters already
+  write through to `layoutStore`, so `configure()` updates the entry as the real
+  values land. No `onAfterGraphConfigured` chaining, no `window.app` read.
 - The **`onNodeAdded` replay loop is gone.** It re-fired `onNodeAdded` for every
   pre-existing node on each graph switch, which leaked spurious node-added
   notifications to unrelated subscribers (`useErrorClearingHooks` still carries
-  a guard written for exactly that). Per-graph layout bootstrap is now solely
-  `layoutStore.initializeFromLiteGraph`, called from `useVueNodeLifecycle` on
-  graph entry — which is what makes subgraph navigation seed the right nodes.
+  a guard written for exactly that). Geometry registers at attach and
+  unregisters at detach instead, so no bootstrap pass re-seeds a graph on entry.
 
-`useVueNodeLifecycle` keeps only layout bootstrap and the Layout↔LiteGraph sync
-lifecycle, and no longer patches anything — see 2g.
+`useVueNodeLifecycle` is gone. `GraphCanvas` owns the Layout↔LiteGraph sync
+lifecycle and no longer patches `onNodeAdded` — see 2g.
 
 ### 2e. Slot reactivity ✅ Shipped
 
@@ -436,9 +434,9 @@ entity now has exactly one write path, and the workarounds that existed because
 writes bypassed it are gone.
 
 **One write path per entity.** Whole-value assignment through `pos` / `size` is
-the only way geometry is written; the setters commit. Element-wise writes reach
-the backing `Rectangle` and never the store, so all of them were converted —
-in three passes, as the forms became apparent:
+the normal path, and the setters commit to the store. `createGeometryView`
+commits indexed writes too. Most in-repo indexed writes now use whole-value
+assignments. The migration found three forms:
 
 | Form               | Example                              | Where it hid         |
 | ------------------ | ------------------------------------ | -------------------- |
@@ -452,34 +450,66 @@ reached the store, and `LGraph.configure` carried a local workaround
 others had none.
 
 **Groups and reroutes joined the store.** `GroupLayout` is id/position/size
-with no zIndex or spatial index — groups draw beneath nodes in insertion order
-and nothing queries them positionally — and geometry is a single
+with no zIndex or spatial index. Groups draw beneath nodes in insertion order,
+and nothing queries them positionally. Geometry is a single
 `setGroupBounds` operation, because `pos` and `size` are two views onto one
 `Rectangle` and must never be stored apart. Reroutes went further: `posInternal`
 is deleted, `pos` reads the stored point, and a reroute registers its own
 geometry in its constructor, which removed two seeding sites.
 
-**The store -> legacy direction is unchanged and still needed.** `useLayoutSync`
-stays, because `LGraphNode.serialize()` reads `this.pos` / `this.size` and the
-canvas renders from `_posSize`. Removing it means the class getters read from
-the store, but they return `Point` / `Size` views onto one buffer and hundreds
-of element-indexed reads across the renderer depend on that. Yjs cannot hold a
-`Float64Array` by reference, so this needs a store-backed geometry view type,
-not a refactor. The re-entrancy the draft worried about did not materialise: the
-writeback compares before writing, so an equal write-back is a no-op.
+**`LGraphNode` no longer runs a continuous store-to-class sync.** When code
+reads geometry, the node checks the global geometry version and copies the
+stored rectangle into `_posSize` if its cache is stale. Serialization and legacy
+rendering read current values through `this.pos` and `this.size` without walking
+every node after each layout change.
 
-**Not done, and each needs a decision rather than more inference:**
+While Vue-node rendering is active, `notifyLayoutChanges` dirties the canvas for
+node layout changes. For non-canvas `resizeNode` and `batchUpdateBounds`
+operations, it also calls `onResize`; canvas resizes already own that callback
+through `LGraphNode.setSize()`. It does not copy geometry into nodes.
+
+**Whole-value setters re-read after committing.** `_positionUpdated` and
+`_sizeUpdated` write only their own half of `_posSize`, so stamping
+`_geometryVersion` to the post-commit store version would mark the untouched
+half fresh while it was still stale. The next commit of that half would then
+publish the stale value to the store and to CRDT peers. Both invalidate and
+refresh instead, which also picks up any value the store clamped or merged.
+
+**Deferred follow-up: extract geometry projection ownership.** Land this after
+the node geometry facade and its CRDT-safety follow-up (PRs 14133 and 14480) so
+the ownership and compensation rules are stable before moving them. Preserve
+behavior while making one focused projection module responsible for the legacy
+geometry cache:
+
+1. Move `_geometryVersion`, `_layoutRegistered`, and `refreshGeometry()` out of
+   `LGraphNode`. Keep ephemeral projection state private to the module, keyed by
+   node identity; do not add another entity store for compatibility-only state.
+2. Make layout registration and removal call that module instead of coordinating
+   node flags and backing buffers directly. `LGraphNode.pos` and `.size` remain
+   compatibility accessors, but delegate synchronization rather than owning its
+   lifecycle.
+3. Once the lifecycle has one owner, replace the store-wide geometry version
+   check with node-scoped invalidation. A geometry change should make only the
+   affected nodes refresh; unrelated node, group, and reroute operations should
+   not force every rendered node through a Yjs lookup.
+
+Completion requires no projection lifecycle fields or methods on `LGraphNode`,
+no registration code that mutates such fields, unchanged extension-facing
+`pos` / `size` behavior, and coverage for store-originated updates, indexed
+writes, removal/re-addition, and CRDT compensation.
+
+**Open decisions:**
 
 1. The geometry views. The hand-written `size` Proxy is gone, replaced by
    `createGeometryView` over `pos` and `size` on `LGraphNode` plus `pos`,
-   `size` and `bounding` on `LGraphGroup`. Every in-repo element write is gone,
-   so their only remaining job is third-party `node.size[1] = h`. Retiring them
-   means accepting that ecosystem writes stop reflowing, or landing a stable
-   resize API.
+   `size` and `bounding` on `LGraphGroup`. The views still handle the indexed
+   position write in `distributeNodes()` and extension writes such as
+   `node.size[1] = h`. Retiring them requires whole-value assignment in
+   `distributeNodes()` and a stable resize API for extensions.
 2. Subgraph IO nodes have conforming write paths but no store entry. A keyed
    entry needs subgraph scoping (`SUBGRAPH_INPUT_ID` is a constant shared by
    every subgraph) and `Subgraph.id` is reassigned by `clear()`, so the key can
-   go stale — the pattern rejected for the link store. Nothing needs keyed
+   go stale. The link store rejected the same pattern. Nothing needs keyed
    access, since callers reach them as `subgraph.inputNode`.
 3. Two hit-testing systems: litegraph against class geometry, `layoutStore`
    against a spatial index. Node bounds are duplicated between `_boundingRect`
@@ -651,9 +681,11 @@ requires a separate ADR.
 **Questions to resolve:**
 
 - Should non-position stores also be CRDT-backed for collaboration?
-- Do the stores need an operation log for undo/redo, or can that remain external
-  (Y.js undo manager)?
 - How does conflict resolution work when two users modify the same record?
+
+Settled: the stores do not need an operation log for undo/redo. `layoutStore`
+carried one and nothing ever read it — undo/redo is snapshot-based through
+`changeTracker` — so it was deleted.
 
 ### Extension API preservation
 
@@ -684,6 +716,64 @@ event listeners instead of callbacks.
 - Callback dispatch remains synchronous during the bridge period.
 - Callback order remains: output validation -> input validation -> commit ->
   output change notification -> input change notification.
+
+### Removed layoutStore queries (custom-node audit pending)
+
+These `layoutStore` methods were deleted once their last in-repo caller went
+away. They were never advertised as extension API, but `layoutStore` is
+reachable from custom nodes, so Hyrum's law applies: someone may depend on
+them.
+
+| Removed method         | Was                                             |
+| ---------------------- | ----------------------------------------------- |
+| `getAllNodes()`        | Reactive map of every node layout, unscoped     |
+| `getNodesInBounds()`   | Reactive node ids intersecting bounds           |
+| `queryNodeAtPoint()`   | Top-zIndex node containing a point              |
+| `queryNodesInBounds()` | Node ids intersecting bounds, via spatial index |
+| `queryItemsInBounds()` | Nodes, links, slots and reroutes in bounds      |
+
+**Action required:** grep the custom-node ecosystem for these names before the
+next release. If any have external dependents, restore them as deprecated
+shims per [Extension API preservation](#extension-api-preservation) rather
+than reintroducing the call sites.
+
+Note that the node-facing ones were also _wrong_ by the time they were
+removed: node layout was keyed by bare `NodeId` with no root-graph scope, and
+registration now happens for every graph including unopened subgraph
+definitions, so any of these would have returned nodes the user cannot see. A
+restored shim must take a `rootGraphId`, which node layout is now keyed by.
+
+### Removed CRDT sync seam (prior art for multiplayer)
+
+`layoutStore` carried three methods reserved for a networked future that has
+not arrived:
+
+| Removed method       | Was                                           |
+| -------------------- | --------------------------------------------- |
+| `getYDoc()`          | The raw `Y.Doc`, for a sync provider          |
+| `applyUpdate()`      | `Y.applyUpdate` — merge a remote peer's ops   |
+| `getStateAsUpdate()` | `Y.encodeStateAsUpdate` — full-state snapshot |
+
+None had a caller. Removed as YAGNI, not as a change of direction: the layout
+store is still a Yjs document and
+[ADR 0003](../adr/0003-crdt-based-layout-system.md) still holds. Reinstating
+them is a few lines against `this.ydoc`.
+
+Two things worth carrying forward when multiplayer is actually built, both
+learned by deleting this:
+
+- `applyUpdate` bypassed `applyOperation`, so nothing that derives state from
+  the operation stream would have seen a remote change. `highestZIndex` (see
+  `allocateZIndex`) is exactly such a counter — a remote peer's node with a
+  higher `zIndex` would not have raised it, and the next allocation would
+  collide. Any real sync path must rebuild that kind of derived state from the
+  document, or observe `ynodes` rather than the operation stream.
+- All three entity types are now keyed by `makeScopedLayoutKey(rootGraphId, id)`,
+  so two peers in different workflows cannot collide. They still share a bucket
+  across subgraphs of one root graph, which is safe only because node ids are
+  unique root-wide — `Subgraph` shares the root graph's `state`, so one counter
+  issues every id. A sync path that merges documents from peers holding
+  different workflows must not assume that invariant survives the merge.
 
 ### Extension Migration Examples (old -> new)
 
@@ -856,6 +946,7 @@ Phase 3c (ConnectivitySystem)  ──── depends on 2c
 Phase 3->4 gate checklist  ──────── depends on 3a, 3b, 3c
 
 Phase 4a (Position writes)  ────── depends on 2a, 3b
+  Geometry projection ownership ── after PRs 14133, 14480; depends on 4a
 Phase 4b (Connectivity mutations) ─ depends on 3c, 3->4 gate
 Phase 4c (Widget writes)  ─────── ✅ largely shipped; depends on 2b
 Phase 4d (Layout decoupling)  ─── depends on 2a, 3->4 gate

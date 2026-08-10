@@ -796,70 +796,234 @@ describe('snapToGrid', () => {
     setActivePinia(createTestingPinia({ stubActions: false }))
   })
 
-  /** Layout entries are seeded by the renderer, so stand one up by hand. */
-  function seededNode(graph: LGraph) {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function addedNode(graph: LGraph) {
     const node = new LGraphNode('test')
     node.pos = [103, 97]
     graph.add(node)
-    layoutStore.initializeFromLiteGraph([
-      { id: node.id, pos: [103, 97], size: [140, 60] }
-    ])
     return node
   }
 
   test('commits the snapped position to the layout store', () => {
-    const node = seededNode(new LGraph())
+    const graph = new LGraph()
+    const node = addedNode(graph)
 
     expect(node.snapToGrid(20)).toBe(true)
 
     expect([...node.pos]).toEqual([100, 100])
-    expect(layoutStore.getNodeLayoutRef(node.id).value?.position).toEqual({
+    expect(
+      layoutStore.getNodeLayoutRef(graph.rootGraph.id, node.id).value?.position
+    ).toEqual({
       x: 100,
       y: 100
     })
   })
 
   test('writes indexed position mutations through to the layout store', () => {
-    const node = seededNode(new LGraph())
+    const graph = new LGraph()
+    const node = addedNode(graph)
     const pos = node.pos
 
     node.pos[0] = 120
 
     expect(node.pos).toBe(pos)
-    expect(layoutStore.getNodeLayoutRef(node.id).value?.position).toEqual({
+    expect(
+      layoutStore.getNodeLayoutRef(graph.rootGraph.id, node.id).value?.position
+    ).toEqual({
       x: 120,
       y: 97
     })
   })
 
   test('does not re-commit the current stored position', () => {
-    const node = seededNode(new LGraph())
-    const operationCount = layoutStore.getOperationsSince(0).length
+    const node = addedNode(new LGraph())
+    const applyOperation = vi.spyOn(layoutStore, 'applyOperation')
 
     node.pos = [103, 97]
 
-    expect(layoutStore.getOperationsSince(0)).toHaveLength(operationCount)
+    expect(applyOperation).not.toHaveBeenCalled()
   })
 
   test('leaves a pinned node alone', () => {
-    const node = seededNode(new LGraph())
+    const graph = new LGraph()
+    const node = addedNode(graph)
     node.pin(true)
 
     expect(node.snapToGrid(20)).toBe(false)
     expect([...node.pos]).toEqual([103, 97])
-    expect(layoutStore.getNodeLayoutRef(node.id).value?.position).toEqual({
+    expect(
+      layoutStore.getNodeLayoutRef(graph.rootGraph.id, node.id).value?.position
+    ).toEqual({
       x: 103,
       y: 97
     })
   })
 
   test('does not report or store a change when already aligned', () => {
-    const node = seededNode(new LGraph())
+    const node = addedNode(new LGraph())
     node.snapToGrid(20)
-    const operationCount = layoutStore.getOperationsSince(0).length
+    const applyOperation = vi.spyOn(layoutStore, 'applyOperation')
 
     expect(node.snapToGrid(20)).toBe(false)
-    expect(layoutStore.getOperationsSince(0)).toHaveLength(operationCount)
+    expect(applyOperation).not.toHaveBeenCalled()
+  })
+})
+
+describe('layout geometry projection', () => {
+  beforeEach(() => {
+    setActivePinia(createTestingPinia({ stubActions: false }))
+    layoutStore.resetForTests()
+  })
+
+  test('moves from the latest stored position', () => {
+    const graph = new LGraph()
+    const node = new LGraphNode('test')
+    graph.add(node)
+    layoutStore.batchUpdateNodeBounds(graph.rootGraph.id, [
+      {
+        nodeId: node.id,
+        bounds: { x: 30, y: 40, width: 200, height: 80 }
+      }
+    ])
+
+    node.move(5, 10)
+
+    expect(
+      layoutStore.getNodeLayoutRef(graph.rootGraph.id, node.id).value?.position
+    ).toEqual({ x: 35, y: 50 })
+  })
+
+  test('snaps the latest stored position', () => {
+    const graph = new LGraph()
+    const node = new LGraphNode('test')
+    graph.add(node)
+    layoutStore.batchUpdateNodeBounds(graph.rootGraph.id, [
+      {
+        nodeId: node.id,
+        bounds: { x: 103, y: 97, width: 200, height: 80 }
+      }
+    ])
+
+    node.snapToGrid(20)
+
+    expect(
+      layoutStore.getNodeLayoutRef(graph.rootGraph.id, node.id).value?.position
+    ).toEqual({ x: 100, y: 100 })
+  })
+
+  test('preserves stored geometry when removed and re-added', () => {
+    const graph = new LGraph()
+    const node = new LGraphNode('test')
+    graph.add(node)
+    layoutStore.batchUpdateNodeBounds(graph.rootGraph.id, [
+      {
+        nodeId: node.id,
+        bounds: { x: 30, y: 40, width: 200, height: 80 }
+      }
+    ])
+
+    graph.remove(node)
+    graph.add(node)
+
+    expect(
+      layoutStore.getNodeLayoutRef(graph.rootGraph.id, node.id).value
+    ).toMatchObject({
+      position: { x: 30, y: 40 },
+      size: { width: 200, height: 80 }
+    })
+  })
+
+  test('refreshes stable views before indexed mutations', () => {
+    const graph = new LGraph()
+    const node = new LGraphNode('test')
+    node.pos = [10, 20]
+    node.size = [100, 50]
+    graph.add(node)
+    const pos = node.pos
+    const size = node.size
+
+    layoutStore.batchUpdateNodeBounds(graph.rootGraph.id, [
+      {
+        nodeId: node.id,
+        bounds: { x: 30, y: 40, width: 200, height: 80 }
+      }
+    ])
+    pos[0] = 50
+    size[1] = 90
+
+    expect(node.pos).toBe(pos)
+    expect(node.size).toBe(size)
+    expect([...pos]).toEqual([50, 40])
+    expect([...size]).toEqual([200, 90])
+    expect(
+      layoutStore.getNodeLayoutRef(graph.rootGraph.id, node.id).value
+    ).toMatchObject({
+      position: { x: 50, y: 40 },
+      size: { width: 200, height: 90 }
+    })
+  })
+
+  test('preserves stored size when assigning position', () => {
+    const graph = new LGraph()
+    const node = new LGraphNode('test')
+    node.pos = [10, 20]
+    node.size = [100, 50]
+    graph.add(node)
+    layoutStore.batchUpdateNodeBounds(graph.rootGraph.id, [
+      {
+        nodeId: node.id,
+        bounds: { x: 30, y: 40, width: 200, height: 80 }
+      }
+    ])
+
+    node.pos = [50, 60]
+
+    expect([...node.size]).toEqual([200, 80])
+  })
+
+  test('preserves stored position when assigning size', () => {
+    const graph = new LGraph()
+    const node = new LGraphNode('test')
+    node.pos = [10, 20]
+    node.size = [100, 50]
+    graph.add(node)
+    layoutStore.batchUpdateNodeBounds(graph.rootGraph.id, [
+      {
+        nodeId: node.id,
+        bounds: { x: 30, y: 40, width: 200, height: 80 }
+      }
+    ])
+
+    node.size = [300, 90]
+
+    expect([...node.pos]).toEqual([30, 40])
+  })
+
+  test('does not write a stale width back to the store', () => {
+    const graph = new LGraph()
+    const node = new LGraphNode('test')
+    node.pos = [10, 20]
+    node.size = [100, 50]
+    graph.add(node)
+    layoutStore.batchUpdateNodeBounds(graph.rootGraph.id, [
+      {
+        nodeId: node.id,
+        bounds: { x: 30, y: 40, width: 200, height: 80 }
+      }
+    ])
+
+    node.pos = [50, 60]
+    node.setSize([node.size[0], 120])
+
+    expect(
+      layoutStore.getNodeLayoutRef(graph.rootGraph.id, node.id).value
+    ).toMatchObject({
+      position: { x: 50, y: 60 },
+      size: { width: 200, height: 120 }
+    })
   })
 })
 
