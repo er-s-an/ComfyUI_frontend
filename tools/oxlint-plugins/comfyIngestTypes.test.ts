@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { collectExportedNames } from './comfyIngestTypes'
 
-const pluginPath = path.resolve('tools/oxlint-plugins/comfyIngestTypes.ts')
+const pluginPath = path.resolve('tools/oxlint-plugins/comfy.ts')
 
 // Run Oxlint's Node entrypoint directly; the .bin shim is a .cmd file on Windows
 // and cannot be spawned as a bare executable.

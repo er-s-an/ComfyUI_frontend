@@ -136,9 +136,17 @@
         "src/platform/secrets/**/*.ts",
         "src/platform/workspace/**/*.ts"
       ],
-      "jsPlugins": ["./tools/oxlint-plugins/comfyIngestTypes.ts"],
+      "jsPlugins": ["./tools/oxlint-plugins/comfy.ts"],
       "rules": {
         "comfy/no-duplicate-ingest-type": "error"
+      }
+    },
+    {
+      "files": ["**/*.test.{ts,tsx}"],
+      "jsPlugins": ["./tools/oxlint-plugins/comfy.ts"],
+      "rules": {
+        "comfy/no-module-scope-vitest-mocks": "warn",
+        "comfy/no-redundant-vitest-cleanup": "warn"
       }
     },
     {

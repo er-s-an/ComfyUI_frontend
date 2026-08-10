@@ -199,7 +199,7 @@ function duplicateMessage(name: string): string {
   return `'${name}' is already exported from ${GENERATED_PACKAGE}. Import it instead of redeclaring — local copies drift from the API contract (see docs/guidance/typescript.md).`
 }
 
-const noDuplicateIngestType = {
+export const noDuplicateIngestType = {
   create(context: RuleContext) {
     const generatedLocalNames = new Set<string>()
 
@@ -231,9 +231,4 @@ const noDuplicateIngestType = {
       }
     }
   }
-}
-
-export default {
-  meta: { name: 'comfy' },
-  rules: { 'no-duplicate-ingest-type': noDuplicateIngestType }
 }

@@ -18,7 +18,6 @@ describe('MyStore', () => {
   beforeEach(() => {
     setActivePinia(createTestingPinia({ stubActions: false }))
     vi.useFakeTimers()
-    vi.resetAllMocks()
   })
 
   afterEach(() => {
@@ -68,13 +67,19 @@ For pluralization / interpolation arguments, spy on the consumer (e.g. the toast
 
 ## Mock Patterns
 
-### Reset all mocks at once
+### Automatic cleanup
 
-```typescript
-beforeEach(() => {
-  vi.resetAllMocks() // Not individual mock.mockReset() calls
-})
-```
+Vitest resets and restores mocks, environments, and globals before every test.
+Do not call `vi.clearAllMocks()`, `vi.resetAllMocks()`,
+`vi.restoreAllMocks()`, `vi.unstubAllEnvs()`, or `vi.unstubAllGlobals()` in
+`beforeEach` or `afterEach`.
+
+Install `vi.stubGlobal()` and `vi.spyOn()` mocks in `beforeEach` or individual
+tests, not at module scope. Automatic cleanup removes module-scope stubs and
+spies before the first test runs.
+
+Cleanup calls inside a test remain valid when the test intentionally separates
+multiple action and assertion phases.
 
 ### Module mocks with vi.mock()
 
