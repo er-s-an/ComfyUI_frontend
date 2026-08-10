@@ -11,8 +11,10 @@ import {
   getCompositorLayers,
   getCompositorPreviewOverride,
   hasCompositorLayers,
+  restoreCompositorLayers,
   setCompositorLayers,
-  setCompositorPreviewOverride
+  setCompositorPreviewOverride,
+  snapshotCompositorLayers
 } from './useCompositorLayers'
 
 const layerRef = { filename: 'a.png', subfolder: '', type: 'temp' }
@@ -95,6 +97,32 @@ describe('useCompositorLayers', () => {
     setCompositorLayers(node, [layerRef], ['hash-a'], [bbox])
     clearCompositorLayers(node)
     expect(getCompositorBBoxes(node)).toBeUndefined()
+  })
+
+  it('survives a workflow switch through snapshot and restore', () => {
+    setCompositorLayers(node, [layerRef], ['hash-a'], [bbox])
+    const snapshot = snapshotCompositorLayers()
+
+    clearCompositorLayers(node)
+    expect(hasCompositorLayers(node)).toBe(false)
+
+    restoreCompositorLayers(snapshot)
+    expect(getCompositorLayers(node)).toEqual([layerRef])
+    expect(getCompositorInputsFingerprint(node)).toEqual(['hash-a'])
+    expect(getCompositorBBoxes(node)).toEqual([bbox])
+  })
+
+  it('restoring another workflow snapshot replaces the whole cache', () => {
+    setCompositorLayers(node, [layerRef])
+    const otherWorkflow = snapshotCompositorLayers()
+    setCompositorLayers(subgraphNode, [layerRef])
+
+    restoreCompositorLayers(otherWorkflow)
+    expect(hasCompositorLayers(node)).toBe(true)
+    expect(hasCompositorLayers(subgraphNode)).toBe(false)
+
+    restoreCompositorLayers(undefined)
+    expect(hasCompositorLayers(node)).toBe(false)
   })
 
   it('stores, replaces and clears the preview override per node', () => {

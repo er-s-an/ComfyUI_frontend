@@ -3,6 +3,11 @@ import _ from 'es-toolkit/compat'
 
 import { assert } from '@/base/assert'
 import { LAYER_EDITOR_DIALOG_KEY } from '@/renderer/extensions/layerEditor/composables/layerEditorDialog'
+import type { WorkflowTransientSnapshot } from '@/platform/workflow/management/workflowTransientState'
+import {
+  restoreWorkflowTransientState,
+  snapshotWorkflowTransientState
+} from '@/platform/workflow/management/workflowTransientState'
 import type { CanvasPointerEvent } from '@/lib/litegraph/src/litegraph'
 import { LGraphCanvas, LiteGraph } from '@/lib/litegraph/src/litegraph'
 import type { ComfyWorkflow } from '@/platform/workflow/management/stores/workflowStore'
@@ -269,6 +274,7 @@ export class ChangeTracker {
 
   ds?: { scale: number; offset: [number, number] }
   nodeOutputs?: Record<string, ExecutedWsMessage['output']>
+  private transientState?: WorkflowTransientSnapshot
 
   private subgraphState?: {
     navigation: string[]
@@ -304,6 +310,7 @@ export class ChangeTracker {
       offset: [app.canvas.ds.offset[0], app.canvas.ds.offset[1]]
     }
     this.nodeOutputs = useNodeOutputStore().snapshotOutputs()
+    this.transientState = snapshotWorkflowTransientState()
     const navigation = useSubgraphNavigationStore().exportState()
     // Always store the navigation state, even if empty (root level)
     this.subgraphState = { navigation }
@@ -349,6 +356,7 @@ export class ChangeTracker {
     if (this.nodeOutputs) {
       useNodeOutputStore().restoreOutputs(this.nodeOutputs)
     }
+    restoreWorkflowTransientState(this.transientState)
     if (this.subgraphState) {
       const { navigation } = this.subgraphState
       const firstInvalidIndex = navigation.findIndex(

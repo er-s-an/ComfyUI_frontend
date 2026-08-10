@@ -1,11 +1,15 @@
 import type { CompositorBBox } from '@/renderer/extensions/compositor/composables/compositorLayerState'
 import { resetCompositorStateWidgets } from '@/renderer/extensions/compositor/composables/compositorWidgets'
+import type { CompositorLayersSnapshot } from '@/renderer/extensions/compositor/composables/useCompositorLayers'
 import {
   clearCompositorLayers,
   clearCompositorPreviewOverride,
-  setCompositorLayers
+  restoreCompositorLayers,
+  setCompositorLayers,
+  snapshotCompositorLayers
 } from '@/renderer/extensions/compositor/composables/useCompositorLayers'
 import type { LGraphNode } from '@/lib/litegraph/src/LGraphNode'
+import { registerWorkflowTransientState } from '@/platform/workflow/management/workflowTransientState'
 import type { NodeOutputWith } from '@/schemas/apiSchema'
 import { useExtensionService } from '@/services/extensionService'
 
@@ -15,6 +19,12 @@ type ImageCompositorOutput = NodeOutputWith<{
   compositor_bboxes?: (CompositorBBox | null)[]
   compositor_state_stale?: boolean[]
 }>
+
+registerWorkflowTransientState('Comfy.ImageCompositor.layers', {
+  snapshot: snapshotCompositorLayers,
+  restore: (state) =>
+    restoreCompositorLayers(state as CompositorLayersSnapshot | undefined)
+})
 
 useExtensionService().registerExtension({
   name: 'Comfy.ImageCompositor',

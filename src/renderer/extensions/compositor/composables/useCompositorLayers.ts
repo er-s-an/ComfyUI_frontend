@@ -15,6 +15,11 @@ interface CompositorNodeCache {
   bboxes?: (CompositorBBox | null)[]
 }
 
+export type CompositorLayersSnapshot = ReadonlyMap<
+  NodeLocatorId,
+  CompositorNodeCache
+>
+
 const cacheByNode = reactive(new Map<NodeLocatorId, CompositorNodeCache>())
 const previewOverrideByNode = reactive(new Map<NodeLocatorId, string>())
 
@@ -88,4 +93,17 @@ export function clearCompositorPreviewOverride(node: CompositorNodeRef): void {
 
 export function hasCompositorLayers(node: CompositorNodeRef): boolean {
   return (cacheByNode.get(cacheKey(node))?.layers.length ?? 0) > 0
+}
+
+export function snapshotCompositorLayers(): CompositorLayersSnapshot {
+  return new Map(cacheByNode)
+}
+
+export function restoreCompositorLayers(
+  snapshot: CompositorLayersSnapshot | undefined
+): void {
+  cacheByNode.clear()
+  for (const [key, value] of snapshot ?? []) {
+    cacheByNode.set(key, value)
+  }
 }
